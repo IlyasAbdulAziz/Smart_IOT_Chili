@@ -529,8 +529,11 @@ function syncFromServer(){
         dirty.log = true;
       }
       var badge = $('esp-badge');
-      badge.className = 'esp-badge' + (S.espOnline ? ' online' : '');
-      $('esp-status-txt').textContent = S.espOnline ? 'ESP Terhubung (Live)' : 'Menunggu Data ESP...';
+      var dummy = isSensorDummy(S.cur);
+      badge.className = 'esp-badge' + ((S.espOnline && !dummy) ? ' online' : '');
+      $('esp-status-txt').textContent = !S.espOnline
+        ? 'ESP Belum Tersambung'
+        : (dummy ? 'ESP Terhubung · Sensor Belum Terbaca' : 'ESP & Sensor Terhubung (Live)');
       if(S.liveML && S.liveML.engine){
         $('ml-engine-note').textContent = 'Engine Server Aktif: ' + S.liveML.engine;
       }
@@ -564,12 +567,37 @@ function buildTiles(){
       '<p class="small" id="d-'+k+'"></p>';
   });
 }
+function isSensorDummy(r){
+  if(!r) return true;
+  // Jika masih angka fallback bawaan ESP saat sensor belum dicolok (100.0, 28.0, 70.0)
+  return (r.soil === 100 && r.temp === 28 && r.rh === 70);
+}
 function renderTiles(){
   var past = S.hist.length>60 ? S.hist[S.hist.length-61] : null;
+  var noEsp = (S.source==='live' && !S.espOnline);
+  var noSensor = (S.source==='live' && S.espOnline && isSensorDummy(S.cur));
+
   KEYS.forEach(function(k){
-    var s=SENSORS[k], v=S.cur[k], st=s.status(v);
+    var s=SENSORS[k], v=S.cur[k], pill=$('st-'+k);
+    if(noEsp){
+      $('v-'+k).textContent = '—';
+      pill.className = 'pill crit';
+      pill.innerHTML = ICON.crit + 'ESP Belum Tersambung';
+      $('mk-'+k).style.left = '0%';
+      $('d-'+k).innerHTML = 'Menunggu koneksi Wi-Fi dari board ESP...';
+      return;
+    }
+    if(noSensor){
+      $('v-'+k).textContent = '—';
+      pill.className = 'pill warn';
+      pill.innerHTML = ICON.warn + 'Sensor Belum Terbaca';
+      $('mk-'+k).style.left = '0%';
+      $('d-'+k).innerHTML = 'ESP sudah terhubung, tetapi kabel sensor belum terbaca di pin ESP.';
+      return;
+    }
+    var st=s.status(v);
     $('v-'+k).textContent = nf1.format(v);
-    var pill=$('st-'+k); pill.className='pill '+(st[0]==='good'?'':st[0]); pill.innerHTML=ICON[st[0]]+st[1];
+    pill.className='pill '+(st[0]==='good'?'':st[0]); pill.innerHTML=ICON[st[0]]+st[1];
     $('mk-'+k).style.left = clamp((v-s.min)/(s.max-s.min)*100,0,100)+'%';
     $('m-'+k).setAttribute('aria-label', s.label+' '+nf1.format(v)+' '+s.unit+', target '+s.lo+' sampai '+s.hi);
     var txt='';
@@ -630,13 +658,31 @@ function renderNextSchedule(){
 
 /* ---------- Tampilan: ML ---------- */
 function renderML(){
+  var noEsp = (S.source==='live' && !S.espOnline);
+  var noSensor = (S.source==='live' && S.espOnline && isSensorDummy(S.cur));
+  var role=$('ml-role');
+
+  if(noEsp || noSensor){
+    $('ml-verdict').textContent = noEsp ? 'ESP BELUM TERSAMBUNG' : 'SENSOR BELUM TERBACA';
+    $('ml-code').textContent = noEsp ? 'OFFLINE' : 'NO SENSOR DATA';
+    $('ml-p').textContent = '—';
+    $('ml-fill').style.width = '0%';
+    role.className = 'pill warn';
+    role.textContent = noEsp ? 'Menunggu ESP' : 'Cek Kabel Sensor';
+    $('ml-contrib').innerHTML = '<span class="small" style="grid-column:1/-1">' +
+      (noEsp ? 'Nyala/colokkan board ESP ke Wi-Fi untuk mulai membaca data sensor secara langsung.'
+             : 'Board ESP sudah terhubung ke server, namun sensor Tanah (A0) / DHT22 (D4) belum mengirimkan pembacaan asli.') +
+      '</span>';
+    $('ml-brief').textContent = noEsp ? 'Status: Menunggu board ESP terhubung ke server.' : 'Status: Menunggu pembacaan sensor dari pin ESP.';
+    return;
+  }
+
   var r=S.cur, pr=predict(r), pct=Math.round(pr.p*100);
   $('ml-verdict').textContent = pr.water?'SIRAM':'JANGAN SIRAM';
   $('ml-code').textContent = pr.water?'WATER':'DO NOT WATER';
   $('ml-p').textContent = pct+'%';
   $('ml-fill').style.width = pct+'%';
   $('ml-prob').setAttribute('aria-label','Peluang perlu disiram '+pct+' persen, ambang 50 persen');
-  var role=$('ml-role');
   if(S.mode==='ml'){ role.className='pill act'; role.textContent='Mengendalikan pompa'; }
   else { role.className='pill off'; role.textContent='Hanya memantau'; }
   var sensorRows = KEYS.map(function(k){
